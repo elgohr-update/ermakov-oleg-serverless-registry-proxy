@@ -267,7 +267,17 @@ type token struct {
 
 func getAuthToken(host string) (string, error) {
 	url := fmt.Sprintf("http://%s/computeMetadata/v1/instance/service-accounts/default/token/", host)
-	resp, err := http.Get(url)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request %s: %+v", url, err)
+	}
+
+	req.Header.Add("Metadata-Flavor", "Google")
+
+	client := &http.Client{}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to query the host %s: %+v", url, err)
 	}
