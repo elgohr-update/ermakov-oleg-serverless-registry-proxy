@@ -266,7 +266,7 @@ type token struct {
 }
 
 func getAuthToken(host string) (string, error) {
-	url := fmt.Sprintf("http://%s/computeMetadata/v1/instance/service-accounts/default/token/", host)
+	url := fmt.Sprintf("http://%s/computeMetadata/v1/instance/service-accounts/default/token", host)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -290,7 +290,7 @@ func getAuthToken(host string) (string, error) {
 	token := token{}
 	jsonErr := json.Unmarshal(body, &token)
 	if jsonErr != nil {
-		log.Fatal(jsonErr)
+		log.Fatalf("error: %s data: %s", jsonErr, body)
 	}
 
 	auth := fmt.Sprintf("%s %s", token.TokenType, token.AccessToken)
