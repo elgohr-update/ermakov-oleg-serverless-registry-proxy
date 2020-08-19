@@ -28,6 +28,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -74,22 +76,7 @@ func main() {
 
 	var auth authenticator
 
-	if useMetadataServer := os.Getenv("USE_METADATA_SERVER"); useMetadataServer != "" {
-		authToken, err := getAuthToken("metadata")
-		if err != nil {
-			log.Fatalf("could not get token from metadata server: %+v", err)
-		}
-		auth = authHeader(authToken)
-	} else if basic := os.Getenv("AUTH_HEADER"); basic != "" {
-		auth = authHeader(basic)
-	} else if gcpKey := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); gcpKey != "" {
-		b, err := ioutil.ReadFile(gcpKey)
-		if err != nil {
-			log.Fatalf("could not read key file from %s: %+v", gcpKey, err)
-		}
-		log.Printf("using specified service account json key to authenticate proxied requests")
-		auth = authHeader("Basic " + base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("_json_key:%s", string(b)))))
-	}
+	auth = getAuthData(auth)
 
 	mux := http.NewServeMux()
 	if browserRedirects {
@@ -113,6 +100,25 @@ func main() {
 	}
 
 	log.Printf("server shutdown successfully")
+}
+
+func getAuthData(auth authenticator) authenticator {
+	if useMetadataServer := os.Getenv("USE_METADATA_SERVER"); useMetadataServer != "" {
+		metadataServerAuth := &metadataServerAuth{}
+		metadataServerAuth.Init()
+
+		auth = metadataServerAuth
+	} else if basic := os.Getenv("AUTH_HEADER"); basic != "" {
+		auth = authHeader(basic)
+	} else if gcpKey := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); gcpKey != "" {
+		b, err := ioutil.ReadFile(gcpKey)
+		if err != nil {
+			log.Fatalf("could not read key file from %s: %+v", gcpKey, err)
+		}
+		log.Printf("using specified service account json key to authenticate proxied requests")
+		auth = authHeader("Basic " + base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("_json_key:%s", string(b)))))
+	}
+	return auth
 }
 
 func discoverTokenService(registryHost string) (string, error) {
@@ -259,18 +265,58 @@ type authHeader string
 
 func (b authHeader) AuthHeader() string { return string(b) }
 
+type metadataServerAuth struct {
+	sync.RWMutex
+	authToken string
+	ExpiresIn int
+	t         *time.Timer
+}
+
+func (m *metadataServerAuth) AuthHeader() string {
+	m.RLock()
+	defer m.RUnlock()
+	return m.authToken
+}
+
+func (m *metadataServerAuth) Init() {
+	m.updateToken()
+
+	go m.updateTokenTimer()
+}
+
+func (m *metadataServerAuth) updateToken() {
+	authToken, expiresIn, err := getAuthToken("metadata")
+	if err != nil {
+		log.Fatalf("could not get token from metadata server: %+v", err)
+	}
+
+	m.Lock()
+	defer m.Unlock()
+	m.ExpiresIn = expiresIn
+	m.authToken = authToken
+	m.t = time.NewTimer(time.Duration(m.ExpiresIn)*time.Second - 5*time.Minute)
+}
+
+func (m *metadataServerAuth) updateTokenTimer() {
+	for {
+		<-m.t.C
+		fmt.Println(time.Now(), "Update authToken")
+		m.updateToken()
+	}
+}
+
 type token struct {
 	AccessToken string `json:"access_token"`
 	ExpiresIn   int    `json:"expires_in"`
 	TokenType   string `json:"token_type"`
 }
 
-func getAuthToken(host string) (string, error) {
+func getAuthToken(host string) (string, int, error) {
 	url := fmt.Sprintf("http://%s/computeMetadata/v1/instance/service-accounts/default/token", host)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to make request %s: %+v", url, err)
+		return "", 0, fmt.Errorf("failed to make request %s: %+v", url, err)
 	}
 
 	req.Header.Add("Metadata-Flavor", "Google")
@@ -279,7 +325,7 @@ func getAuthToken(host string) (string, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to query the host %s: %+v", url, err)
+		return "", 0, fmt.Errorf("failed to query the host %s: %+v", url, err)
 	}
 
 	body, readErr := ioutil.ReadAll(resp.Body)
@@ -295,5 +341,5 @@ func getAuthToken(host string) (string, error) {
 
 	auth := fmt.Sprintf("%s %s", token.TokenType, token.AccessToken)
 
-	return auth, nil
+	return auth, token.ExpiresIn, nil
 }
