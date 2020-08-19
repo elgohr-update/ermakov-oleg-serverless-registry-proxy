@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -72,7 +73,14 @@ func main() {
 	log.Printf("discovered token endpoint for backend registry: %s", tokenEndpoint)
 
 	var auth authenticator
-	if basic := os.Getenv("AUTH_HEADER"); basic != "" {
+
+	if useMetadataServer := os.Getenv("USE_METADATA_SERVER"); useMetadataServer != "" {
+		authToken, err := getAuthToken("metadata")
+		if err != nil {
+			log.Fatalf("could not get token from metadata server: %+v", err)
+		}
+		auth = authHeader(authToken)
+	} else if basic := os.Getenv("AUTH_HEADER"); basic != "" {
 		auth = authHeader(basic)
 	} else if gcpKey := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); gcpKey != "" {
 		b, err := ioutil.ReadFile(gcpKey)
@@ -250,3 +258,32 @@ type authenticator interface {
 type authHeader string
 
 func (b authHeader) AuthHeader() string { return string(b) }
+
+type token struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	TokenType   string `json:"token_type"`
+}
+
+func getAuthToken(host string) (string, error) {
+	url := fmt.Sprintf("http://%s/computeMetadata/v1/instance/service-accounts/default/token/", host)
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("failed to query the host %s: %+v", url, err)
+	}
+
+	body, readErr := ioutil.ReadAll(resp.Body)
+	if readErr != nil {
+		log.Fatal(readErr)
+	}
+
+	token := token{}
+	jsonErr := json.Unmarshal(body, &token)
+	if jsonErr != nil {
+		log.Fatal(jsonErr)
+	}
+
+	auth := fmt.Sprintf("%s %s", token.TokenType, token.AccessToken)
+
+	return auth, nil
+}
