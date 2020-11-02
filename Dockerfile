@@ -5,6 +5,9 @@ COPY . .
 RUN go build -o /app
 
 FROM alpine
+
+LABEL org.opencontainers.image.source https://github.com/ermakov-oleg/serverless-registry-proxy
+
 RUN apk add --no-cache ca-certificates
 COPY --from=build /app /app
 
