@@ -23,7 +23,7 @@ jobs:
       - name: Publish to Registry
         uses: elgohr/Publish-Docker-Github-Action@master
         with:
-          name: ghcr.io/ermakov-oleg/statsd-proxy
+          name: ghcr.io/ermakov-oleg/serverless-registry-proxy
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
           registry: ghcr.io
