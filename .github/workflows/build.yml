@@ -19,12 +19,13 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           release_name: ${{ github.ref }}
-
+      
       - name: Publish to Registry
         uses: elgohr/Publish-Docker-Github-Action@master
         with:
-          name: ermakovolegs/serverless-registry-proxy
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          name: ghcr.io/ermakov-oleg/statsd-proxy
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
+          registry: ghcr.io
           dockerfile: Dockerfile
           tag_names: true
